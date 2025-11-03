@@ -1,92 +1,257 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>センサからの信号受信</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.1.9/p5.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.3/socket.io.js"></script>
-  </head>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>センサからの信号受信 (タイムアタック)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.1.9/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.3/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+      /* ページの余白をなくす */
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+        /* p5.jsキャンバスがはみ出さないように */
+        overflow: hidden; 
+      }
+      /* UI要素をキャンバスの上に重ねる */
+      .ui-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        background-color: rgba(0, 0, 0, 0.5);
+        color: white;
+        padding: 10px;
+        border-radius: 8px;
+      }
+      /* QRコード用のコンテナ (QRコード表示機能がある場合) */
+      .qr-container {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+        padding: 10px; 
+        border: 1px solid #ccc; 
+        background: #f9f9f9;
+        border-radius: 8px;
+      }
+      #qrcode {
+        width:128px; 
+        height:128px; 
+        margin-top:10px;
+      }
+      #qr-url {
+        font-size: 12px; 
+        word-wrap: break-word; 
+        width: 128px;
+        color: black;
+      }
+      /* タイマーと結果表示 */
+      .game-info {
+        position: absolute;
+        top: 150px; /* UIの下に配置 */
+        left: 10px;
+        z-index: 10;
+      }
+      #timer-display {
+        color: white;
+        font-size: 2em;
+        margin: 0;
+      }
+      #result-display {
+        color: yellow;
+        font-size: 2.5em;
+        margin: 0;
+        display: none; /* 初期状態は非表示 */
+      }
+    </style>
+  </head>
 
-  <body>
-    <h1>スマホからのセンサ情報を受信</h1>
-    <div>
-      <div>あなたのID: <span id="myid"></span></div>
-      <button id="connect">ルームに入る</button>
-      <div>受信した情報はコンソールログで確認してください</div>
+  <body>
+
+    <div class="ui-container">
+      <h1>スマホからのセンサ情報を受信</h1>
+      <div>あなたのID: <span id="myid"></span></div>
+      <button id="connect">ルームに入る</button>
+      <div>受信した情報はコンソールログで確認してください</div>
     </div>
-    <script>
-      let socket = io.connect();
 
-      let btn = document.querySelector("#connect");
-      let b = 0;
-      let g = 0;
+    <div class="game-info">
+      <h2 id="timer-display">Time: 0.0</h2>
+      <h2 id="result-display"></h2>
+    </div>
 
-      let myid = sessionStorage.getItem('clientId');
-      if (!myid) {
-        myid = Math.random().toString(36).substring(2, 15);
-        sessionStorage.setItem('clientId', myid);
-      }
-      
-      document.querySelector("#myid").innerHTML = myid;
-      console.log("あなたのID: ", myid);
+    <div class="qr-container">
+      <strong>スマホでアクセス</strong>
+      <div id="qrcode"></div>
+      <div id="qr-url"></div>
+    </div>
+        <script>
+      let socket = io.connect();
 
-      btn.addEventListener("click", function () {
-        socket.emit("join", "game");
-        btn.remove();
+      let btn = document.querySelector("#connect");
+      let b = 0; // スマホの傾き (beta)
+      let g = 0; // スマホの傾き (gamma)
+
+      // --- ユーザーID生成 ---
+      let myid = sessionStorage.getItem('clientId');
+      if (!myid) {
+        myid = Math.random().toString(36).substring(2, 15);
+        sessionStorage.setItem('clientId', myid);
+      }
+      document.querySelector("#myid").innerHTML = myid;
+      console.log("あなたのID: ", myid);
+
+      // --- ルーム参加ボタン ---
+      btn.addEventListener("click", function () {
+        socket.emit("join", "game");
+        btn.remove(); // ボタンを消す
+      });
+
+      // --- QRコード生成 (不要なら削除) ---
+      window.addEventListener("load", function() {
+        // smart.html はあなたのスマホ用ファイル名に合わせてください
+        let smartHtmlUrl = `http://${location.hostname}:${location.port}/smart.html`;
+        document.querySelector("#qr-url").textContent = smartHtmlUrl;
+        new QRCode(document.getElementById("qrcode"), {
+            text: smartHtmlUrl,
+            width: 128,
+            height: 128
+        });
       });
-    
-      socket.on("sensor", function (data) {
-        g = parseFloat(data.g);
-        b = parseFloat(data.b);
-        console.log(data);
-      });
+      // --- QRコードここまで ---
+    
+      // --- センサー情報受信 ---
+      socket.on("sensor", function (data) {
+        // data.g と data.b が null や undefined でないか確認
+        if (data.g != null) {
+          g = parseFloat(data.g);
+        }
+        if (data.b != null) {
+          b = parseFloat(data.b);
+        }
+        // console.log(data); // ログが多い場合はコメントアウト
+      });
 
-      let x = 0;
-      let y = 0;
-      let r = 40;
-      let speed = 0.1;
-      let cat;
+      // --- p5.js ゲームロジック ---
+      let x = 0; // ボールのX座標
+      let y = 0; // ボールのY座標
+      let r = 40; // ボールの半径
+      let speed = 0.1; // ボールの速度係数
+      
+      // ▼▼▼ ゲーム用グローバル変数を追加 ▼▼▼
+      let targetX, targetY; // ターゲットのX, Y座標
+      let targetR = 30;     // ターゲットの半径
+      let startTime;        // ゲーム開始時間
+      let elapsedTime = 0;  // 経過時間
+      let gameActive = true;  // ゲームが実行中か
+      // ▲▲▲ ここまで追加 ▲▲▲
 
-      function setup() {
-        createCanvas(800, 800, WEBGL);
-        camera(0, 800, 100, 0, 0, 0, 0, 1, 0);
-        noStroke();
-      }
+      function setup() {
+        // ウィンドウ全体にキャンバスを広げる
+        createCanvas(windowWidth, windowHeight, WEBGL);
+        camera(0, 800, 100, 0, 0, 0, 0, 1, 0);
+        noStroke();
 
-      function draw() {
-        background(0);
-        orbitControl();
-        ambientLight(50, 50, 50);
-        directionalLight(100, 20, 20, -1, -1, -1);
-        pointLight(20, 20, 100, 0, 0, 800);
+        // ▼▼▼ ターゲットの配置とタイマースタート ▼▼▼
+        // ターゲットをランダムな位置に配置
+        // (画面端に行き過ぎないよう、-350〜350 程度に)
+        targetX = random(-(width/2 - 100), (width/2 - 100));
+        targetY = random(-(height/2 - 100), (height/2 - 100));
+        
+        // ゲーム開始時間を記録
+        startTime = millis(); 
+        // ▲▲▲ ここまで追加 ▲▲▲
+      }
 
-        // 板の動き
+      function draw() {
+
+        // ▼▼▼ タイマー更新 ▼▼▼
+        if (gameActive) {
+          // (現在の時間 - 開始時間) / 1000 で秒に変換
+          elapsedTime = (millis() - startTime) / 1000.0;
+          document.querySelector("#timer-display").innerHTML = "Time: " + elapsedTime.toFixed(1);
+        }
+        
+        // ▼▼▼ 背景色設定 ▼▼▼
+        if (gameActive) {
+          background(0); // ゲーム中は黒
+        } else {
+          background(255, 105, 180); // ゴール後はピンク
+        }
+        // ▲▲▲ ここまで ▲▲▲
+
+        orbitControl();
+        ambientLight(50, 50, 50);
+        directionalLight(100, 20, 20, -1, -1, -1);
+        pointLight(20, 20, 100, 0, 0, 800);
+
+        // 板の動き (変更なし)
+        push();
+        rotateX((-PI * b) / 180);
+        rotateY((PI * g) / 180);
+        translate(0, 0, -50);
+        // 板のサイズをキャンバスに合わせる
+        box(width, height, 30);
+        pop();
+
+        // ▼▼▼ ターゲットの描画 (赤い球) ▼▼▼
         push();
-        rotateX((-PI * b) / 180);
-        rotateY((PI * g) / 180);
-        translate(0, 0, -50);
-        box(800, 800, 30);
+        // ターゲットも板の傾きに合わせてZ座標を計算
+        let targetZ = -targetX * sin((PI * g) / 180) - targetY * sin((PI * b) / 180);
+        translate(targetX, targetY, targetZ);
+        specularMaterial(255, 0, 0); // 赤色
+        sphere(targetR);
         pop();
+        // ▲▲▲ ここまで追加 ▲▲▲
 
-        // ボールの動き
-        push();
-        x = x + speed * g;
-        y = y + speed * b;
+        // ボールの動き
+        push();
+        // ▼▼▼ ゲームが実行中の時だけボールを動かす ▼▼▼
+        if (gameActive) {
+          x = x + speed * g;
+          y = y + speed * b;
+        }
+        // ▲▲▲ ここまで ▲▲▲
 
-        // ボールの高さを板の傾きに合わせて高さを変える
-        translate(x, y, -x * sin((PI * g) / 180) - y * sin((PI * b) / 180));
-        //translate(x, y, 0); // 高さを変えない場合
+        // ボールの高さを板の傾きに合わせて高さを変える
+        translate(x, y, -x * sin((PI * g) / 180) - y * sin((PI * b) / 180));
 
-        specularMaterial(200);
-        sphere(r);
-        if (x > width / 2) x = width / 2;
-        if (y > width / 2) y = width / 2;
-        if (x < -width / 2) x = -width / 2;
-        if (y < -width / 2) y = -width / 2;
-        pop();
+        specularMaterial(200); // ボールの色 (白っぽい)
+        sphere(r);
+
+        // 壁の判定 (キャンバスサイズに合わせる)
+        if (x > width / 2 - r) x = width / 2 - r;
+        if (y > height / 2 - r) y = height / 2 - r;
+        if (x < -width / 2 + r) x = -width / 2 + r;
+        if (y < -height / 2 + r) y = -height / 2 + r;
+        pop();
+
+        // ▼▼▼ 当たり判定 ▼▼▼
+        // 2Dの距離で判定
+        let d = dist(x, y, targetX, targetY);
+        
+        // 距離が「ボールの半径 + ターゲットの半径」より小さくなったら
+        if (gameActive && d < (r + targetR)) {
+          gameActive = false; // ゲームを停止
+          
+          // 結果を表示
+          let resultTime = elapsedTime.toFixed(1);
+          document.querySelector("#result-display").innerHTML = "GOAL! Time: " + resultTime;
+          document.querySelector("#result-display").style.display = "block";
+          document.querySelector("#timer-display").style.display = "none";
+        }
+        // ▲▲▲ ここまで追加 ▲▲▲
+      }
+
+      // ウィンドウサイズが変更されたらキャンバスもリサイズ
+      function windowResized() {
+        resizeCanvas(windowWidth, windowHeight);
       }
-    </script>
-  </body>
+    </script>
+  </body>
 </html>
